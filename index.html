@@ -336,9 +336,106 @@
     main{ padding:2.5rem 1.5rem 3.5rem; }
     .case-meta{ flex-direction:column; align-items:flex-start; gap:0.2rem; }
   }
+
+  /* ---------- In-page editor ---------- */
+  body.editing #editable-root{
+    outline:1px dashed var(--accent);
+    outline-offset:6px;
+  }
+  body.editing #editable-root *:hover{
+    outline:1px dotted var(--accent-bright);
+    outline-offset:2px;
+  }
+  #editor-draft-banner{
+    display:none;
+    position:fixed;
+    top:0; left:0; right:0;
+    z-index:1000;
+    justify-content:center;
+    align-items:center;
+    gap:1rem;
+    background:var(--accent);
+    color:#fff;
+    font-family:var(--font-mono);
+    font-size:0.78rem;
+    padding:0.55rem 1rem;
+  }
+  #editor-draft-banner.open{ display:flex; }
+  #editor-draft-banner button{
+    background:transparent;
+    border:1px solid rgba(255,255,255,0.6);
+    color:#fff;
+    padding:0.2rem 0.6rem;
+    font-family:var(--font-mono);
+    font-size:0.72rem;
+    cursor:pointer;
+  }
+  #editor-toolbar{
+    position:fixed;
+    right:1.25rem;
+    bottom:1.25rem;
+    z-index:1000;
+    display:flex;
+    flex-direction:column;
+    align-items:flex-end;
+    gap:0.5rem;
+    font-family:var(--font-mono);
+  }
+  #editor-toolbar .row{
+    display:flex;
+    align-items:center;
+    gap:0.4rem;
+    background:var(--paper-raised);
+    border:1px solid var(--line);
+    padding:0.4rem;
+    box-shadow:0 4px 14px rgba(0,0,0,0.18);
+  }
+  #editor-toolbar button{
+    width:2.1rem;
+    height:2.1rem;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    background:transparent;
+    border:1px solid var(--line);
+    color:var(--ink);
+    cursor:pointer;
+    font-size:1rem;
+    transition:border-color 0.15s ease, color 0.15s ease;
+  }
+  #editor-toolbar button:hover{ border-color:var(--accent); color:var(--accent-bright); }
+  #editor-toolbar button.active{ border-color:var(--accent-bright); color:var(--accent-bright); }
+  #editor-toolbar button:disabled{ opacity:0.4; cursor:default; }
+  #editor-status{
+    font-size:0.7rem;
+    color:var(--ink-soft);
+    max-width:16rem;
+    text-align:right;
+  }
+  #editor-token-panel{
+    display:none;
+    flex-direction:column;
+    gap:0.5rem;
+    background:var(--paper-raised);
+    border:1px solid var(--line);
+    padding:0.75rem;
+    width:15.5rem;
+  }
+  #editor-token-panel.open{ display:flex; }
+  #editor-token-panel input{
+    font-family:var(--font-mono);
+    font-size:0.78rem;
+    padding:0.4rem 0.5rem;
+    border:1px solid var(--line);
+    background:var(--paper);
+    color:var(--ink);
+  }
+  #editor-token-panel p{ margin:0; font-size:0.7rem; color:var(--ink-soft); line-height:1.4; }
+  #editor-token-panel .actions{ display:flex; gap:0.5rem; justify-content:flex-end; }
+  #editor-token-panel .actions button{ width:auto; height:auto; padding:0.35rem 0.7rem; font-size:0.72rem; }
 </style>
 
-<div class="sheet">
+<div class="sheet" id="editable-root">
   <aside class="letterhead">
     <svg class="seal" viewBox="0 0 88 88" aria-hidden="true">
       <circle class="ring" cx="44" cy="44" r="40" stroke-width="1"></circle>
@@ -531,6 +628,29 @@
   </main>
 </div>
 
+<div id="editor-draft-banner">
+  <span>You have unpublished local edits.</span>
+  <button type="button" data-action="restore-draft">Restore</button>
+  <button type="button" data-action="discard-draft">Discard</button>
+</div>
+
+<div id="editor-toolbar">
+  <div id="editor-token-panel">
+    <p>Paste a GitHub personal access token with write access to this repo. It's stored only in this browser's local storage and sent only to api.github.com.</p>
+    <input type="password" id="editor-token-input" placeholder="ghp_..." autocomplete="off">
+    <div class="actions">
+      <button type="button" data-action="clear-token">Clear</button>
+      <button type="button" data-action="save-token">Save</button>
+    </div>
+  </div>
+  <div class="row">
+    <button type="button" id="editor-edit-btn" title="Toggle edit mode">&#9998;</button>
+    <button type="button" id="editor-publish-btn" title="Publish to GitHub">&#8593;</button>
+    <button type="button" id="editor-token-btn" title="GitHub token">&#128273;</button>
+  </div>
+  <div id="editor-status"></div>
+</div>
+
 <script>
   (function(){
     var links = Array.prototype.slice.call(document.querySelectorAll('#toc a'));
@@ -546,5 +666,181 @@
       });
     }, { rootMargin: '-40% 0px -55% 0px' });
     sections.forEach(function(s){ if (s) io.observe(s); });
+  })();
+</script>
+
+<script>
+  (function(){
+    var OWNER = 'MudShroom';
+    var REPO = 'University-Portfolio';
+    var PATH = 'index.html';
+    var DRAFT_KEY = 'portfolio_editor_draft_v1';
+    var TOKEN_KEY = 'portfolio_editor_token_v1';
+
+    var root = document.getElementById('editable-root');
+    var editBtn = document.getElementById('editor-edit-btn');
+    var publishBtn = document.getElementById('editor-publish-btn');
+    var tokenBtn = document.getElementById('editor-token-btn');
+    var tokenPanel = document.getElementById('editor-token-panel');
+    var tokenInput = document.getElementById('editor-token-input');
+    var statusEl = document.getElementById('editor-status');
+    var banner = document.getElementById('editor-draft-banner');
+
+    function getToken(){ return localStorage.getItem(TOKEN_KEY) || ''; }
+    function setToken(t){ localStorage.setItem(TOKEN_KEY, t); }
+    function clearToken(){ localStorage.removeItem(TOKEN_KEY); }
+    function setStatus(msg){ statusEl.textContent = msg || ''; }
+
+    function saveDraft(){
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ html: root.innerHTML, ts: Date.now() }));
+      setStatus('Draft saved locally · ' + new Date().toLocaleTimeString());
+    }
+
+    var saveTimer = null;
+    root.addEventListener('input', function(){
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(saveDraft, 600);
+    });
+
+    function loadDraft(){
+      try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); }
+      catch(e){ return null; }
+    }
+    function clearDraft(){ localStorage.removeItem(DRAFT_KEY); banner.classList.remove('open'); }
+
+    (function checkDraft(){
+      var draft = loadDraft();
+      if (draft && draft.html && draft.html !== root.innerHTML) banner.classList.add('open');
+    })();
+
+    banner.addEventListener('click', function(e){
+      var action = e.target.getAttribute('data-action');
+      if (action === 'restore-draft') {
+        var draft = loadDraft();
+        if (draft) root.innerHTML = draft.html;
+        banner.classList.remove('open');
+        setStatus('Draft restored.');
+      } else if (action === 'discard-draft') {
+        clearDraft();
+      }
+    });
+
+    var editing = false;
+    editBtn.addEventListener('click', function(){
+      editing = !editing;
+      document.body.classList.toggle('editing', editing);
+      editBtn.classList.toggle('active', editing);
+      if (editing) {
+        root.setAttribute('contenteditable', 'true');
+        setStatus('Edit mode on — click any text to change it.');
+      } else {
+        root.removeAttribute('contenteditable');
+        setStatus('');
+      }
+    });
+
+    tokenBtn.addEventListener('click', function(){
+      tokenInput.value = getToken();
+      tokenPanel.classList.toggle('open');
+    });
+
+    tokenPanel.addEventListener('click', function(e){
+      var action = e.target.getAttribute('data-action');
+      if (action === 'save-token') {
+        setToken(tokenInput.value.trim());
+        tokenPanel.classList.remove('open');
+        setStatus('Token saved locally.');
+      } else if (action === 'clear-token') {
+        clearToken();
+        tokenInput.value = '';
+        setStatus('Token cleared.');
+      }
+    });
+
+    function toBase64Utf8(str){
+      var bytes = new TextEncoder().encode(str);
+      var binary = '';
+      for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    }
+    function fromBase64Utf8(b64){
+      var binary = atob(b64);
+      var bytes = new Uint8Array(binary.length);
+      for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new TextDecoder().decode(bytes);
+    }
+
+    function spliceEditableRegion(fileText, newOuterHTML){
+      var startTag = '<div id="editable-root"';
+      var startIdx = fileText.indexOf(startTag);
+      if (startIdx === -1) throw new Error('Could not find the editable region in the published file.');
+      var openTagEnd = fileText.indexOf('>', startIdx);
+      var divRe = /<\/?div\b[^>]*>/gi;
+      divRe.lastIndex = openTagEnd + 1;
+      var depth = 1, match, endIdx = -1;
+      while ((match = divRe.exec(fileText))) {
+        if (match[0].charAt(1) === '/') depth--; else depth++;
+        if (depth === 0) { endIdx = divRe.lastIndex; break; }
+      }
+      if (endIdx === -1) throw new Error('Could not find the end of the editable region.');
+      return fileText.slice(0, startIdx) + newOuterHTML + fileText.slice(endIdx);
+    }
+
+    function getCleanOuterHTML(){
+      var clone = root.cloneNode(true);
+      clone.removeAttribute('contenteditable');
+      clone.removeAttribute('spellcheck');
+      return clone.outerHTML;
+    }
+
+    function apiHeaders(){
+      return {
+        'Authorization': 'token ' + getToken(),
+        'Accept': 'application/vnd.github+json'
+      };
+    }
+
+    publishBtn.addEventListener('click', function(){
+      if (!getToken()) {
+        setStatus('Add a GitHub token first.');
+        tokenPanel.classList.add('open');
+        return;
+      }
+      publishBtn.disabled = true;
+      setStatus('Publishing…');
+      var apiBase = 'https://api.github.com/repos/' + OWNER + '/' + REPO + '/contents/' + PATH;
+      fetch(apiBase, { headers: apiHeaders() })
+        .then(function(res){
+          if (!res.ok) throw new Error('Could not read the current file (HTTP ' + res.status + ').');
+          return res.json();
+        })
+        .then(function(data){
+          var currentText = fromBase64Utf8(data.content.replace(/\n/g, ''));
+          var updatedText = spliceEditableRegion(currentText, getCleanOuterHTML());
+          return fetch(apiBase, {
+            method: 'PUT',
+            headers: apiHeaders(),
+            body: JSON.stringify({
+              message: 'Update page content via in-page editor',
+              content: toBase64Utf8(updatedText),
+              sha: data.sha
+            })
+          });
+        })
+        .then(function(res){
+          if (!res.ok) return res.json().then(function(body){ throw new Error((body && body.message) || ('HTTP ' + res.status)); });
+          return res.json();
+        })
+        .then(function(){
+          clearDraft();
+          setStatus('Published · ' + new Date().toLocaleTimeString());
+        })
+        .catch(function(err){
+          setStatus('Publish failed: ' + err.message);
+        })
+        .finally(function(){
+          publishBtn.disabled = false;
+        });
+    });
   })();
 </script>
