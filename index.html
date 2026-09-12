@@ -771,12 +771,15 @@
     }
 
     function spliceEditableRegion(fileText, newOuterHTML){
-      var startTag = '<div id="editable-root"';
-      var startIdx = fileText.indexOf(startTag);
-      if (startIdx === -1) throw new Error('Could not find the editable region in the published file.');
-      var openTagEnd = fileText.indexOf('>', startIdx);
+      var scriptIdx = fileText.indexOf('<script');
+      var searchLimit = scriptIdx === -1 ? fileText.length : scriptIdx;
+      var openTagRe = /<div\b[^>]*\bid=["']editable-root["'][^>]*>/;
+      var openTagMatch = openTagRe.exec(fileText.slice(0, searchLimit));
+      if (!openTagMatch) throw new Error('Could not find the editable region in the published file.');
+      var startIdx = openTagMatch.index;
+      var openTagEnd = startIdx + openTagMatch[0].length;
       var divRe = /<\/?div\b[^>]*>/gi;
-      divRe.lastIndex = openTagEnd + 1;
+      divRe.lastIndex = openTagEnd;
       var depth = 1, match, endIdx = -1;
       while ((match = divRe.exec(fileText))) {
         if (match[0].charAt(1) === '/') depth--; else depth++;
